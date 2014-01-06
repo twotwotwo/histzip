@@ -30,10 +30,10 @@ containing change histories, where delta coding or other long-range
 compression isn't already baked into the format.  If you grab a chunk of
 English Wikipedia's change history XML dump (like any pages-meta-history .7z
 file from [Wikimedia's December 2013 dump][7]), then pipe the uncompressed
-text through histzip and bzip2, the histzip|bzip2 can handle input at on the
+text through histzip and bzip2, the histzip|bzip2 pipeline can handle input at on the
 order of 100 MB/CPU-second.  That means it runs many times faster for this
-particular use case than the general-purpose compression tools used now,
-while getting compression ratios near 7zip's on average.  Because
+particular use case than the general-purpose compressors used now,
+while compressing files better than bzip and about as well as 7zip.  Because
 Wikipedia's full change history is several terabytes and dumped monthly,
 this might be useful for producing those dumps more quickly.  (To be clear,
 I'm not associated with Wikimedia, and nor is this project, though I hope it
