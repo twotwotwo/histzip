@@ -52,7 +52,7 @@ Wikipedia change history and some synthetic tests, but anything can happen.
 
 On recent-ish Intel chips in 64-bit mode, [SSE4.2 makes it faster to compute
 those CRCs][9], which contributes to the 64-bit builds' better speeds.  You
-can build histzip as pure Go for any platform with go build, and it will use
+can build histzip as pure Go for any of the supported platforms with go build, and it will use
 the hardware CRC instruction where possible (yay Go standard libraries!). 
 To get gccgo linux/amd64 build using the hardware CRC, I wrote some extra
 code and did some extra build steps which are recorded in in gccgo-build.sh
