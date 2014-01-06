@@ -169,12 +169,15 @@ func (c *Compressor) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
-func (c *Compressor) Flush() error {
+func (c *Compressor) Flush() (err error) {
 	if c.matchLen > 0 {
-		return c.putMatch(c.matchPos, c.matchLen)
+		err = c.putMatch(c.matchPos, c.matchLen)
+		c.matchPos, c.matchLen = 0, 0
 	} else {
-		return c.putLiteral(c.pos, c.literalLen)
+		err = c.putLiteral(c.pos, c.literalLen)
+		c.literalLen = 0
 	}
+	return
 }
 
 func (c *Compressor) Close() (err error) {
