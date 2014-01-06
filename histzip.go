@@ -128,6 +128,7 @@ func (c *Compressor) Write(p []byte) (n int, err error) {
 				// extend backwards
 				for literalLen > 0 &&
 					matchPos-1 > pos-rMask+maxLiteral &&
+					matchPos-1 > 0 &&
 					ring[(pos-matchLen)&rMask] == ring[(matchPos-1)&rMask] {
 					literalLen--
 					matchPos--
