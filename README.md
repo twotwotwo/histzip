@@ -1,9 +1,12 @@
 histzip
 =======
 
-Quickly deduplicate long redundancies in files (think 100+ byte repeated
-stretches) that occur relatively long distances apart (think up to a few
-MB), like in wiki change history dumps.  There are builds for [Linux amd64][1], [Linux x86][3], [Windows 64-bit][4] and [32-bit][5], and [Mac 64-bit][6].  For faster compression on systems that can run it, a [gccgo Linux amd64][2] build is available, too.
+Quickly compress wiki change dumps and files like them. More precisely,
+compresses out long repeats in files (think 100+ byte repeated stretches)
+that may occur relatively long distances apart (think up to a few MB). 
+There are builds for [Linux amd64][1], [Linux x86][3], [Windows 64-bit][4]
+and [32-bit][5], and [Mac 64-bit][6].  For faster compression on systems
+that can run it, a [gccgo Linux amd64][2] build is available, too.
 
 [1]: http://www.rfarmer.net/histzip/histzip.6g
 [2]: http://www.rfarmer.net/histzip/histzip
