@@ -169,13 +169,16 @@ func (c *Compressor) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
-func (c *Compressor) Flush() (err error) {
+func (c *Compressor) Flush() error {
 	if c.matchLen > 0 {
-		err = c.putMatch(c.matchPos, c.matchLen)
+		return c.putMatch(c.matchPos, c.matchLen)
 	} else {
-		err = c.putLiteral(c.pos, c.literalLen)
+		return c.putLiteral(c.pos, c.literalLen)
 	}
-	if err != nil {
+}
+
+func (c *Compressor) Close() (err error) {
+	if err = c.Flush(); err != nil {
 		return
 	}
 	return c.putInt(0)
@@ -361,7 +364,7 @@ func main() {
 		if _, err = io.Copy(c, br); err != nil {
 			critical(err)
 		}
-		if err = c.Flush(); err != nil {
+		if err = c.Close(); err != nil {
 			critical(err)
 		}
 		if err = bw.Flush(); err != nil {
