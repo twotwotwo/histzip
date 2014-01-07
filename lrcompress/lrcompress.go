@@ -176,17 +176,17 @@ func (c *Compressor) Close() (err error) {
 
 const maxReadLiteral = 1 << 16
 
-// Ring is a ring-buffer of bytes with Copy and Write operations. Writes and
+// ring is a ring-buffer of bytes with Copy and Write operations. Writes and
 // copies are teed to an io.Writer provided on initialization.
-type Ring struct {
+type ring struct {
 	pos  int64     // count of bytes ever written
 	mask int64     // &mask turns pos into a ring offset
 	w    io.Writer // output of writes/copies goes here as well as ring
 	ring []byte    // the bytes
 }
 
-func NewRing(sizeBits uint, w io.Writer) Ring {
-	return Ring{
+func newRing(sizeBits uint, w io.Writer) ring {
+	return ring{
 		pos:  0,
 		mask: 1<<sizeBits - 1,
 		w:    w,
@@ -194,7 +194,7 @@ func NewRing(sizeBits uint, w io.Writer) Ring {
 	}
 }
 
-func (r *Ring) Write(p []byte) (n int, err error) {
+func (r *ring) Write(p []byte) (n int, err error) {
 	n, err = r.w.Write(p)
 	if err != nil {
 		return
@@ -212,9 +212,9 @@ func (r *Ring) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
-// Ring.Copy copies old content to the current position. If the copy source
+// ring.Copy copies old content to the current position. If the copy source
 // overlaps the destination, Copy will produce repeats.
-func (r *Ring) Copy(start int64, n int) (err error) {
+func (r *ring) Copy(start int64, n int) (err error) {
 	N := n
 	for N > 0 && err == nil {
 		n = N
@@ -243,7 +243,7 @@ func (r *Ring) Copy(start int64, n int) (err error) {
 // Decompress input from rd to w in one shot. Does not handle framing format.
 func Decompress(historyBits uint, rd io.Reader, w io.Writer) error {
 	br := bufio.NewReader(rd)
-	r := NewRing(historyBits, w)
+	r := newRing(historyBits, w)
 	cursor := int64(0)
 	literal := [maxReadLiteral]byte{}
 	for {
