@@ -15,24 +15,21 @@ import (
 	"os"
 )
 
-var CRCTable = crc32.MakeTable(crc32.Castagnoli)
-
 type compRing [1 << compHistBits]byte
 type compHtbl [1 << hBits]int64
 
 // Compressor is a Writer into which you can dump content.
 type Compressor struct {
-	pos        int64       // count of bytes ever written
-	ring       compRing    // the bytes
-	h          uint64      // current rolling hash
-	CRC        hash.Hash32 // CRC32C f/self-test
-	matchPos   int64       // current match start or 0
-	matchLen   int64       // current match length or 0
-	cursor     int64       // "expected" match start
-	w          io.Writer   // compressed output
-	literalLen int64       // current literal length or 0
-	encodeBuf  [16]byte    // for varints
-	hTbl       compHtbl    // hashtable holding offsets into source file
+	pos        int64     // count of bytes ever written
+	ring       compRing  // the bytes
+	h          uint64    // current rolling hash
+	matchPos   int64     // current match start or 0
+	matchLen   int64     // current match length or 0
+	cursor     int64     // "expected" match start
+	w          io.Writer // compressed output
+	literalLen int64     // current literal length or 0
+	encodeBuf  [16]byte  // for varints
+	hTbl       compHtbl  // hashtable holding offsets into source file
 }
 
 const compHistBits = 22    // log2 bytes of history for compression
@@ -50,11 +47,10 @@ const hShift = 64 - hBits
 const fBits uint = compHistBits - hBits + 1 // 1/2 fill the table
 const fMask uint64 = 1<<fBits - 1
 
-// Make a compressor with 1<<historyBits of memory, writing output to w.
+// Make a compressor with 1<<compHistBits of memory, writing output to w.
 func NewCompressor(w io.Writer) *Compressor {
 	return &Compressor{
-		w:   w,
-		CRC: crc32.New(CRCTable),
+		w: w,
 	}
 }
 
@@ -106,7 +102,7 @@ func (c *Compressor) Write(p []byte) (n int, err error) {
 		h *= ((0x703a03ac | 1) * 2) & (1<<32 - 1)
 		h ^= uint64(b)
 		// if we're in a match, extend or end it
-		if matchPos > 0 {
+		if matchLen > 0 {
 			// try to extend it
 			if ring[(matchPos+matchLen)&rMask] == b &&
 				matchLen < maxMatch {
@@ -147,7 +143,7 @@ func (c *Compressor) Write(p []byte) (n int, err error) {
 			}
 		}
 		// (still) not in a match, so just extend the literal
-		if matchPos == 0 {
+		if matchLen == 0 {
 			if literalLen == maxLiteral {
 				if err = c.putLiteral(pos, literalLen); err != nil {
 					return
@@ -165,7 +161,6 @@ func (c *Compressor) Write(p []byte) (n int, err error) {
 		pos++
 	}
 	c.h, c.pos, c.matchPos, c.matchLen, c.literalLen = h, pos, matchPos, matchLen, literalLen
-	_, _ = c.CRC.Write(p)
 	return len(p), nil
 }
 
@@ -192,18 +187,16 @@ const maxReadLiteral = 1 << 16
 // Ring is a ring-buffer of bytes with Copy and Write operations. Writes and
 // copies are teed to an io.Writer provided on initialization.
 type Ring struct {
-	pos  int64       // count of bytes ever written
-	mask int64       // &mask turns pos into a ring offset
-	CRC  hash.Hash32 // CRC32C for self-check
-	w    io.Writer   // output of writes/copies goes here as well as ring
-	ring []byte      // the bytes
+	pos  int64     // count of bytes ever written
+	mask int64     // &mask turns pos into a ring offset
+	w    io.Writer // output of writes/copies goes here as well as ring
+	ring []byte    // the bytes
 }
 
 func NewRing(sizeBits uint, w io.Writer) Ring {
 	return Ring{
 		pos:  0,
 		mask: 1<<sizeBits - 1,
-		CRC:  crc32.New(CRCTable),
 		w:    w,
 		ring: make([]byte, 1<<sizeBits),
 	}
@@ -214,7 +207,6 @@ func (r *Ring) Write(p []byte) (n int, err error) {
 	if err != nil {
 		return
 	}
-	_, _ = r.CRC.Write(p)
 	for len(p) > 0 && err == nil {
 		l := len(p)
 		pos := int(r.pos & r.mask)
@@ -257,7 +249,7 @@ func (r *Ring) Copy(start int64, n int) (err error) {
 }
 
 // Decompress input from rd to w in one shot. Does not handle framing format.
-func Decompress(historyBits uint, rd io.Reader, w io.Writer) (err error, H uint32) {
+func Decompress(historyBits uint, rd io.Reader, w io.Writer) error {
 	br := bufio.NewReader(rd)
 	r := NewRing(historyBits, w)
 	cursor := int64(0)
@@ -265,34 +257,42 @@ func Decompress(historyBits uint, rd io.Reader, w io.Writer) (err error, H uint3
 	for {
 		instr, err := binary.ReadVarint(br)
 		if err != nil {
-			return err, 0
+			return err
 		}
 		if instr > 0 { // copy!
 			l := instr
 			cursorMove, err := binary.ReadVarint(br)
 			if err != nil {
-				return err, 0
+				return err
 			}
 			cursor += cursorMove
 			if err = r.Copy(cursor, int(l)); err != nil {
-				return err, 0
+				return err
 			}
 			cursor += l
 		}
 		if instr == 0 { // end of stream!
-			return nil, r.CRC.Sum32()
+			return io.EOF
 		}
 		if instr < 0 { // literal!
 			l := -instr
 			cursor += l
 			if _, err := io.ReadFull(br, literal[:l]); err != nil {
-				return err, 0
+				return err
 			}
 			if _, err = r.Write(literal[:l]); err != nil {
-				return err, 0
+				return err
 			}
 		}
 	}
+}
+
+func NewDecompressor(historyBits uint, rd io.Reader) io.Reader {
+	pr, pw := io.Pipe()
+	go func() {
+		pw.CloseWithError(Decompress(historyBits, rd, pw))
+	}()
+	return pr
 }
 
 const decompressMaxHistBits = 26         // read files w/up to this
@@ -304,19 +304,21 @@ func critical(a ...interface{}) {
 	os.Exit(255)
 }
 
+func crc32c() hash.Hash32 { return crc32.New(crc32.MakeTable(crc32.Castagnoli)) }
+
 // main() handles the framing format including checksums, and self-tests
 func main() {
 	br := bufio.NewReader(os.Stdin)
 	head, err := br.Peek(8)
+	crc := crc32c()
 	if err != nil {
 		critical("could not read header")
 	}
 	if bytes.Equal(head[:4], Sig) {
 		bits, vermajor, extra := uint(head[4]), int(head[5]), int(head[7])
 		if vermajor > VerMajor {
-			critical("file uses a new major version of format")
-		}
-		if bits > decompressMaxHistBits {
+			critical("file uses a newer version of format; upgrade, please")
+		} else if bits > decompressMaxHistBits {
 			critical("file would need", 1<<(bits-20), "MB RAM for decompression (if that's OK, recompile with decompHistBits increased)")
 		}
 		for i := 0; i < extra+8; i++ {
@@ -326,11 +328,11 @@ func main() {
 			}
 		}
 		bw := bufio.NewWriter(os.Stdout)
-		err, H := Decompress(bits, br, bw)
-		if err != nil {
+		mw := io.MultiWriter(bw, crc)
+		err := Decompress(bits, br, mw)
+		if err != io.EOF {
 			critical(err)
-		}
-		if err = bw.Flush(); err != nil {
+		} else if err = bw.Flush(); err != nil {
 			critical(err)
 		}
 		ckSum := uint32(0)
@@ -339,7 +341,7 @@ func main() {
 			if err != nil {
 				critical("error reading checksum:", err)
 			}
-			ok := ckSum == H
+			ok := ckSum == crc.Sum32()
 			if !ok {
 				critical("checksum mismatch")
 			}
@@ -357,32 +359,32 @@ func main() {
 		w = io.MultiWriter(os.Stdout, q)
 		go func() {
 			err := error(nil)
-			err, checkHash = Decompress(compHistBits, p, ioutil.Discard)
+			check := crc32c()
+			err = Decompress(compHistBits, p, check)
+			checkHash = check.Sum32()
 			go io.Copy(ioutil.Discard, p)
 			checkErr <- err
 		}()
 		// compress
 		bw := bufio.NewWriter(w)
 		c := NewCompressor(bw)
-		if _, err = io.Copy(c, br); err != nil {
+		tr := io.TeeReader(br, crc)
+		if _, err = io.Copy(c, tr); err != nil {
 			critical(err)
-		}
-		if err = c.Close(); err != nil {
+		} else if err = c.Close(); err != nil {
 			critical(err)
-		}
-		if err = bw.Flush(); err != nil {
+		} else if err = bw.Flush(); err != nil {
 			critical(err)
 		}
 		// verify the test decompression worked
 		err = <-checkErr
-		if err != nil {
+		if err != io.EOF {
 			critical("test decompression error:", err)
-		}
-		if c.CRC.Sum32() != checkHash {
+		} else if crc.Sum32() != checkHash {
 			critical("test decompression checksum mismatch")
 		}
 		// write the checksum
-		err = binary.Write(os.Stdout, binary.BigEndian, c.CRC.Sum32())
+		err = binary.Write(os.Stdout, binary.BigEndian, crc.Sum32())
 		if err != nil {
 			critical("could not write checksum:", err)
 		}
