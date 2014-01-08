@@ -7,6 +7,22 @@ import (
 	"io"
 )
 
+// ring buffer (yep, size baked in)
+const CompHistBits = 22           // log2 bytes of history for compression
+const rMask = 1<<CompHistBits - 1 // &rMask turns offset into ring pos
+
+// compression hashtable
+const hBits = 18           // log2 hashtable size
+const hMask = 1<<hBits - 1 // c.hTbl[h>>hShift&hMask] is current hashtable entry
+const hShift = 32 - hBits
+const fMask = 1<<fBits - 1             // hit hashtable if fBits are 1111...
+const fBits = CompHistBits - hBits + 1 // 1/2 fill the table
+
+// output format choices
+const window = 64          // bytes that must overlap to match
+const maxLiteral = 1 << 16 // we'll write this size literal
+const maxMatch = 1 << 18   // max match we output (we'll read larger)
+
 type compRing [1 << CompHistBits]byte
 type compHtbl [1 << hBits]int64
 
@@ -14,7 +30,7 @@ type compHtbl [1 << hBits]int64
 type Compressor struct {
 	pos        int64     // count of bytes ever written
 	ring       compRing  // the bytes
-	h          uint64    // current rolling hash
+	h          uint32    // current rolling hash
 	matchMin   int64     // first matchable byte (for Reset)
 	matchPos   int64     // current match start or 0
 	matchLen   int64     // current match length or 0
@@ -24,21 +40,6 @@ type Compressor struct {
 	encodeBuf  [16]byte  // for varints
 	hTbl       compHtbl  // hashtable holding offsets into source file
 }
-
-const CompHistBits = 22    // log2 bytes of history for compression
-const hBits = 18           // log2 hashtable size
-const window = 64          // bytes that must overlap to match
-const maxLiteral = 1 << 16 // we'll write this size literal
-const maxMatch = 1 << 18   // max match we output (we'll read larger)
-// note ring size during *compression* is baked in at compile time
-const rMask = 1<<CompHistBits - 1 // &rMask turns offset into ring pos
-// c.hTbl[h>>hShift&hMask] is current hashtable entry
-const hMask = 1<<hBits - 1
-const hShift = 64 - hBits
-
-// only access hTbl if (h&fMask == fMask)
-const fBits uint = CompHistBits - hBits + 1 // 1/2 fill the table
-const fMask uint64 = 1<<fBits - 1
 
 // Make a compressor with 1<<CompHistBits of memory, writing output to w.
 func NewCompressor(w io.Writer) *Compressor {
@@ -85,13 +86,39 @@ func (c *Compressor) putLiteral(pos, literalLen int64) (err error) {
 	return
 }
 
+// found a potential match; see if it checks out and use it if so
+func (c *Compressor) tryMatch(ring *compRing, pos, literalLen, match int64) (matchLen_ int64, err error) {
+	matchPos, matchLen := match, int64(1) // 1 because cur. byte matched
+	min := pos - rMask + maxLiteral
+	if min < c.matchMin {
+		min = c.matchMin
+	}
+	// extend backwards
+	for literalLen > 0 &&
+		matchPos-1 > min &&
+		ring[(pos-matchLen)&rMask] == ring[(matchPos-1)&rMask] {
+		literalLen--
+		matchPos--
+		matchLen++
+	}
+	if matchLen >= window { // long enough match, flush literal and use it
+		// this literal ends before pos-matchLen+1, not pos
+		if err = c.putLiteral(pos-matchLen+1, literalLen); err != nil {
+			return
+		}
+		return matchLen, error(nil)
+	} else { // short match, ignore
+		return 0, error(nil)
+	}
+}
+
 func (c *Compressor) Write(p []byte) (n int, err error) {
 	h, ring, hTbl, pos, matchPos, matchLen, literalLen, matchMin := c.h, &c.ring, &c.hTbl, c.pos, c.matchPos, c.matchLen, c.literalLen, c.matchMin
 	for _, b := range p {
 		// can use any 32-bit const with least sig. bits=10b and some higher
 		// bits set; even *=6 eventually mixes lower bits into the top ones
 		h *= ((0x703a03ac|1)*2)&(1<<32-1) | 1<<31
-		h ^= uint64(b)
+		h ^= uint32(b)
 		// if we're in a match, extend or end it
 		if matchLen > 0 {
 			// try to extend it
@@ -106,30 +133,15 @@ func (c *Compressor) Write(p []byte) (n int, err error) {
 				matchPos, matchLen = 0, 0
 			}
 		} else if literalLen > window && h&fMask == fMask {
-			// see if we can *start* a match here.
-			// get the hashtable entry
 			match := hTbl[h>>hShift&hMask]
-			// check if it's in the usable range and cur. byte matches
+			// check if it's in usable range and cur. byte matches, then tryMatch
 			if match > matchMin && b == ring[match&rMask] && match > pos-rMask+maxLiteral {
-				matchPos, matchLen = match, 1 // 1 because cur. byte matched
-				// extend backwards
-				for literalLen > 0 &&
-					matchPos-1 > pos-rMask+maxLiteral &&
-					matchPos-1 > matchMin &&
-					ring[(pos-matchLen)&rMask] == ring[(matchPos-1)&rMask] {
-					literalLen--
-					matchPos--
-					matchLen++
-				}
-				if matchLen < window { // short match, ignore
-					literalLen += matchLen - 1
-					matchLen, matchPos = 0, 0
-				} else { // match was long enough
-					// this literal ends before pos-matchLen+1, not pos
-					if err = c.putLiteral(pos-matchLen+1, literalLen); err != nil {
-						return
-					}
+				matchLen, err = c.tryMatch(ring, pos, literalLen, match)
+				if matchLen > 0 {
 					literalLen = 0
+					matchPos = match - matchLen + 1
+				} else if err != nil {
+					return
 				}
 			}
 		}
@@ -192,7 +204,7 @@ func (c *Compressor) LoadHistory(d []byte) {
 	h, pos, hTbl, ring := c.h, c.pos, &c.hTbl, &c.ring
 	for _, b := range d {
 		h *= ((0x703a03ac|1)*2)&(1<<32-1) | 1<<31
-		h ^= uint64(b)
+		h ^= uint32(b)
 		// update hashtable and ring
 		ring[pos&rMask] = b
 		if h&fMask == fMask {
@@ -206,6 +218,9 @@ func (c *Compressor) LoadHistory(d []byte) {
 
 // Change where compressed data is written. If you've written data, Flush() it first.
 func (c *Compressor) SetWriter(w io.Writer) {
+	if c.matchPos != 0 || c.literalLen != 0 || c.matchLen != 0 {
+		panic("Call Flush() before SetWriter()")
+	}
 	c.w = w
 }
 
