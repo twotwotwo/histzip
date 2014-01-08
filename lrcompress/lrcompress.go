@@ -31,7 +31,6 @@ type Compressor struct {
 	pos        int64     // count of bytes ever written
 	ring       compRing  // the bytes
 	h          uint32    // current rolling hash
-	matchMin   int64     // first matchable byte (for Reset)
 	matchPos   int64     // current match start or 0
 	matchLen   int64     // current match length or 0
 	cursor     int64     // "expected" match start
@@ -90,8 +89,8 @@ func (c *Compressor) putLiteral(pos, literalLen int64) (err error) {
 func (c *Compressor) tryMatch(ring *compRing, pos, literalLen, match int64) (matchLen_ int64, err error) {
 	matchPos, matchLen := match, int64(1) // 1 because cur. byte matched
 	min := pos - rMask + maxLiteral
-	if min < c.matchMin {
-		min = c.matchMin
+	if min < 0 {
+		min = 0
 	}
 	// extend backwards
 	for literalLen > 0 &&
@@ -113,7 +112,7 @@ func (c *Compressor) tryMatch(ring *compRing, pos, literalLen, match int64) (mat
 }
 
 func (c *Compressor) Write(p []byte) (n int, err error) {
-	h, ring, hTbl, pos, matchPos, matchLen, literalLen, matchMin := c.h, &c.ring, &c.hTbl, c.pos, c.matchPos, c.matchLen, c.literalLen, c.matchMin
+	h, ring, hTbl, pos, matchPos, matchLen, literalLen := c.h, &c.ring, &c.hTbl, c.pos, c.matchPos, c.matchLen, c.literalLen
 	for _, b := range p {
 		// can use any 32-bit const with least sig. bits=10b and some higher
 		// bits set; even *=6 eventually mixes lower bits into the top ones
@@ -135,7 +134,7 @@ func (c *Compressor) Write(p []byte) (n int, err error) {
 		} else if literalLen > window && h&fMask == fMask {
 			match := hTbl[h>>hShift&hMask]
 			// check if it's in usable range and cur. byte matches, then tryMatch
-			if match > matchMin && b == ring[match&rMask] && match > pos-rMask+maxLiteral {
+			if match > 0 && b == ring[match&rMask] && match > pos-rMask+maxLiteral {
 				matchLen, err = c.tryMatch(ring, pos, literalLen, match)
 				if matchLen > 0 {
 					literalLen = 0
@@ -184,44 +183,6 @@ func (c *Compressor) Close() (err error) {
 		return
 	}
 	return c.putInt(0)
-}
-
-// Clear the history and other state. If you've written data, Flush() it first.
-func (c *Compressor) Reset() {
-	if c.matchPos != 0 || c.literalLen != 0 || c.matchLen != 0 {
-		panic("Call Flush() before Reset()")
-	}
-	c.matchMin = c.pos
-	c.cursor = c.pos
-	c.pos++
-}
-
-// Load data as if it had been written. If you've written real data, Flush() it first.
-func (c *Compressor) LoadHistory(d []byte) {
-	if c.matchPos != 0 || c.literalLen != 0 || c.matchLen != 0 {
-		panic("Call Flush() before LoadHistory()")
-	}
-	h, pos, hTbl, ring := c.h, c.pos, &c.hTbl, &c.ring
-	for _, b := range d {
-		h *= ((0x703a03ac|1)*2)&(1<<32-1) | 1<<31
-		h ^= uint32(b)
-		// update hashtable and ring
-		ring[pos&rMask] = b
-		if h&fMask == fMask {
-			hTbl[h>>hShift&hMask] = pos
-		}
-		pos++
-	}
-	c.cursor += int64(len(d))
-	c.h, c.pos = h, pos
-}
-
-// Change where compressed data is written. If you've written data, Flush() it first.
-func (c *Compressor) SetWriter(w io.Writer) {
-	if c.matchPos != 0 || c.literalLen != 0 || c.matchLen != 0 {
-		panic("Call Flush() before SetWriter()")
-	}
-	c.w = w
 }
 
 const maxReadLiteral = 1 << 16
