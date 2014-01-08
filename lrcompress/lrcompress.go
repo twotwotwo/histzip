@@ -15,6 +15,7 @@ type Compressor struct {
 	pos        int64     // count of bytes ever written
 	ring       compRing  // the bytes
 	h          uint64    // current rolling hash
+	matchMin   int64     // first matchable byte (for Reset)
 	matchPos   int64     // current match start or 0
 	matchLen   int64     // current match length or 0
 	cursor     int64     // "expected" match start
@@ -41,9 +42,7 @@ const fMask uint64 = 1<<fBits - 1
 
 // Make a compressor with 1<<CompHistBits of memory, writing output to w.
 func NewCompressor(w io.Writer) *Compressor {
-	return &Compressor{
-		w: w,
-	}
+	return &Compressor{w: w, pos: 1, cursor: 1}
 }
 
 func (c *Compressor) putInt(i int64) (err error) {
@@ -87,11 +86,11 @@ func (c *Compressor) putLiteral(pos, literalLen int64) (err error) {
 }
 
 func (c *Compressor) Write(p []byte) (n int, err error) {
-	h, ring, hTbl, pos, matchPos, matchLen, literalLen := c.h, &c.ring, &c.hTbl, c.pos, c.matchPos, c.matchLen, c.literalLen
+	h, ring, hTbl, pos, matchPos, matchLen, literalLen, matchMin := c.h, &c.ring, &c.hTbl, c.pos, c.matchPos, c.matchLen, c.literalLen, c.matchMin
 	for _, b := range p {
 		// can use any 32-bit const with least sig. bits=10b and some higher
 		// bits set; even *=6 eventually mixes lower bits into the top ones
-		h *= ((0x703a03ac | 1) * 2) & (1<<32 - 1)
+		h *= ((0x703a03ac|1)*2)&(1<<32-1) | 1<<31
 		h ^= uint64(b)
 		// if we're in a match, extend or end it
 		if matchLen > 0 {
@@ -111,12 +110,12 @@ func (c *Compressor) Write(p []byte) (n int, err error) {
 			// get the hashtable entry
 			match := hTbl[h>>hShift&hMask]
 			// check if it's in the usable range and cur. byte matches
-			if match > 0 && b == ring[match&rMask] && match > pos-rMask+maxLiteral {
+			if match > matchMin && b == ring[match&rMask] && match > pos-rMask+maxLiteral {
 				matchPos, matchLen = match, 1 // 1 because cur. byte matched
 				// extend backwards
 				for literalLen > 0 &&
 					matchPos-1 > pos-rMask+maxLiteral &&
-					matchPos-1 > 0 &&
+					matchPos-1 > matchMin &&
 					ring[(pos-matchLen)&rMask] == ring[(matchPos-1)&rMask] {
 					literalLen--
 					matchPos--
@@ -167,11 +166,47 @@ func (c *Compressor) Flush() (err error) {
 	return
 }
 
+// Flush if needed, then write an end marker to the diff output.
 func (c *Compressor) Close() (err error) {
 	if err = c.Flush(); err != nil {
 		return
 	}
 	return c.putInt(0)
+}
+
+// Clear the history and other state. If you've written data, Flush() it first.
+func (c *Compressor) Reset() {
+	if c.matchPos != 0 || c.literalLen != 0 || c.matchLen != 0 {
+		panic("Call Flush() before Reset()")
+	}
+	c.matchMin = c.pos
+	c.cursor = c.pos
+	c.pos++
+}
+
+// Load data as if it had been written. If you've written real data, Flush() it first.
+func (c *Compressor) LoadHistory(d []byte) {
+	if c.matchPos != 0 || c.literalLen != 0 || c.matchLen != 0 {
+		panic("Call Flush() before LoadHistory()")
+	}
+	h, pos, hTbl, ring := c.h, c.pos, &c.hTbl, &c.ring
+	for _, b := range d {
+		h *= ((0x703a03ac|1)*2)&(1<<32-1) | 1<<31
+		h ^= uint64(b)
+		// update hashtable and ring
+		ring[pos&rMask] = b
+		if h&fMask == fMask {
+			hTbl[h>>hShift&hMask] = pos
+		}
+		pos++
+	}
+	c.cursor += int64(len(d))
+	c.h, c.pos = h, pos
+}
+
+// Change where compressed data is written. If you've written data, Flush() it first.
+func (c *Compressor) SetWriter(w io.Writer) {
+	c.w = w
 }
 
 const maxReadLiteral = 1 << 16

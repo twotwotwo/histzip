@@ -73,17 +73,16 @@ func main() {
 		if _, err := os.Stdout.Write(header); err != nil {
 			critical("could not write header")
 		}
-		w := io.Writer(os.Stdout)
 		// go decompress and checksum
 		checkHash, checkErr := uint32(0), make(chan error)
-		p, q := io.Pipe()
-		w = io.MultiWriter(os.Stdout, q)
+		pr, pw := io.Pipe()
+		w := io.MultiWriter(os.Stdout, pw)
 		go func() {
 			err := error(nil)
 			check := crc32c()
-			err = lrcompress.Decompress(lrcompress.CompHistBits, p, check)
+			err = lrcompress.Decompress(lrcompress.CompHistBits, pr, check)
 			checkHash = check.Sum32()
-			go io.Copy(ioutil.Discard, p)
+			go io.Copy(ioutil.Discard, pr)
 			checkErr <- err
 		}()
 		// compress
