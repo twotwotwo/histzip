@@ -27,7 +27,7 @@ and decompression looks like:
 
 On an English Wikipedia dump, histzip's throughput was over 200MB/CPU-second, and a histzip|bzip pipeline ran at about 100 MB/CPU-second. Compression ratios for the histzip|bzip pipeline were roughly similar to [7zip]'s, slightly better on some chunks of history and slightly worse on others.
 
-There are other long-range compressors that might interest you. [rzip] is awesome, and directly inspired some aspects of histzip's implementation. [bm] is a [Bentley-McIlroy][bmpaper] library by CloudFlare also written in Go, compressing matches against a fixed dictionary. [Git][gitdiff], [xdelta], and [open-vcdiff] are other open-source binary diff implementations.
+There are other long-range compressors that might interest you. [rzip] is awesome, and directly inspired some aspects of histzip's implementation. [bm] is a [Bentley-McIlroy][bmpaper] library by CloudFlare also written in Go, compressing matches against a fixed dictionary. [Git][gitdiff], [xdelta], and [open-vcdiff] have other open-source binary diff implementations.
 
 [rzip]: http://rzip.samba.org/
 [bm]: https://github.com/cloudflare/bm
