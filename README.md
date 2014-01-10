@@ -29,17 +29,31 @@ histzip exists to try to provide good performance packing flat files
 containing change histories, where delta coding or other long-range
 compression isn't already baked into the format.  If you grab a chunk of
 English Wikipedia's change history XML dump (like any pages-meta-history .7z
-file from [Wikimedia's December 2013 dump][7]), then pipe the uncompressed
-text through histzip and bzip2, the histzip|bzip2 pipeline can handle input at on the
-order of 100 MB/CPU-second.  That means it runs many times faster for this
-particular use case than the general-purpose compressors used now,
-while compressing files better than bzip and about as well as 7zip.  Because
-Wikipedia's full change history is several terabytes and dumped monthly,
-this might be useful for producing those dumps more quickly.  (To be clear,
-I'm not associated with Wikimedia, and nor is this project, though I hope it
-can be useful.)
+file from [Wikimedia's December 2013 dump][7]), histzip can accept input 
+at over 200MB/s, and a histzip|bzip pipeline can run at over 100 MB/s. 
+For this use case, histzip|bzip is many times faster than the general-purpose
+compressors used now, and compresses files better than bzip and about as well 
+as 7zip.  Because Wikipedia's full change history is several terabytes and 
+dumped monthly, this might be useful for producing those dumps more quickly.  
+(To be clear, I'm not associated with Wikimedia, and nor is this project, 
+though I hope it can be useful.)
 
+Many programs compress of long repeats at long distances. Notably, [rzip], 
+from which histzip picks up implementation tricks, compresses long matches
+in a 900MB sliding window using up to a couple hundred MB of RAM. [bm] 
+is a long-range compressor used by CloudFlare, using a fixed dictionary 
+rather than a sliding window. [LZMA] can be set to use a relatively long 
+sliding dictionary. A key paper on long-range compression was written by
+[Jon Bentley and Douglas McIlroy][bmpaper]. histzip is an implementation 
+I think is well suited to compressing wiki change histories (medium-sized
+sliding window, low enough RAM requirements, support for pipelining, 
+good speed), but doesn't represent anything fundamentally new.
+
+[rzip]: http://rzip.samba.org/
+[bm]: https://github.com/cloudflare/bm
+[bmpaper]: http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.11.8470&rep=rep1&type=pdf
 [7]: http://dumps.wikimedia.org/enwiki/20131202/
+[LZMA]: http://www.7-zip.org/sdk.html
 
 While compressing, histzip decompresses its output and makes sure it matches
 the input by comparing CRCs.  If it should fail to match, you'll see "Can't
