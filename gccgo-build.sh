@@ -13,7 +13,7 @@ find $WORK -name \*.a | xargs --no-run-if-empty rm
 mkdir -p $WORK/github.com/twotwotwo/histzip/crc32gcc/_obj/
 mkdir -p $WORK/github.com/twotwotwo/histzip/crc32gcc/_obj/exe/
 pushd /home/randall/gocode/src/github.com/twotwotwo/histzip/crc32gcc
-gccgo -I $WORK -c -g -m64 -mcrc32 -fgo-pkgpath=github.com/twotwotwo/histzip/crc32gcc -fgo-relative-import-path=_/home/randall/gocode/src/github.com/twotwotwo/histzip/crc32gcc -o $WORK/github.com/twotwotwo/histzip/crc32gcc/_obj/crc32.o -O3 ./crc32.go
+gccgo -I $WORK -c -g -m64 -fgo-pkgpath=github.com/twotwotwo/histzip/crc32gcc -fgo-relative-import-path=_/home/randall/gocode/src/github.com/twotwotwo/histzip/crc32gcc -o $WORK/github.com/twotwotwo/histzip/crc32gcc/_obj/crc32.o -O3 ./crc32.go
 gcc -m64 -O3 -mcrc32 -c -o $WORK/github.com/twotwotwo/histzip/crc32gcc/crc32_c.o $WORK/github.com/twotwotwo/histzip/crc32gcc/crc32.c
 ar cru $WORK/github.com/twotwotwo/histzip/libcrc32gcc.a $WORK/github.com/twotwotwo/histzip/crc32gcc/_obj/crc32.o $WORK/github.com/twotwotwo/histzip/crc32gcc/crc32_c.o
 popd
@@ -31,7 +31,7 @@ pushd /home/randall/gocode/src/github.com/twotwotwo/histzip
 gccgo -I $WORK -I /home/randall/gocode/pkg/gccgo_linux_amd64 -c -g -m64 -fgo-relative-import-path=_/home/randall/gocode/src/github.com/twotwotwo/histzip -o $WORK/github.com/twotwotwo/histzip/_obj/main.o -O3 ./histzip.go
 ar cru $WORK/github.com/twotwotwo/libhistzip.a $WORK/github.com/twotwotwo/histzip/_obj/main.o
 cd .
-gccgo -o $WORK/github.com/twotwotwo/histzip/_obj/exe/a.out $WORK/github.com/twotwotwo/histzip/_obj/main.o $WORK/github.com/twotwotwo/histzip/lrcompress/_obj/lrcompress.o -m64 -mcrc32 -static -Wl,-u,pthread_create -O3 $WORK/github.com/twotwotwo/histzip/libcrc32gcc.a
+gccgo -o $WORK/github.com/twotwotwo/histzip/_obj/exe/a.out $WORK/github.com/twotwotwo/histzip/_obj/main.o $WORK/github.com/twotwotwo/histzip/lrcompress/_obj/lrcompress.o -m64 -static -Wl,-u,pthread_create -O3 $WORK/github.com/twotwotwo/histzip/libcrc32gcc.a
 cp $WORK/github.com/twotwotwo/histzip/_obj/exe/a.out histzip
 popd
 

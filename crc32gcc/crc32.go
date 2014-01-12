@@ -34,8 +34,8 @@ func (c crc) BlockSize() int { return 1 }
 
 func (c *crc) Reset() { *c = 0 }
 
-func (c crc) Sum(p []byte) []byte { 
-    return append(p, byte(c>>24), byte(c>>16), byte(c>>8), byte(c))
+func (c crc) Sum(p []byte) []byte {
+	return append(p, byte(c>>24), byte(c>>16), byte(c>>8), byte(c))
 }
 
 func New(t *crc32.Table) hash.Hash32 {
