@@ -63,7 +63,7 @@ func main() {
 	}
 	head := string(headBytes)
 	rejectZippedInput(head)
-	if head == Sig {
+	if head[:4] == Sig {
 		bits, vermajor, extra := uint(head[4]), int(head[5]), int(head[7])
 		if vermajor > VerMajor {
 			critical("file uses a newer version of format; upgrade, please")
