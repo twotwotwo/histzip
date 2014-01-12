@@ -124,17 +124,17 @@ func main() {
 		} else if err = bw.Flush(); err != nil {
 			critical(err)
 		}
+		// write the checksum
+		err = binary.Write(os.Stdout, binary.BigEndian, crc.Sum32())
+		if err != nil {
+			critical("could not write checksum:", err)
+		}
 		// verify the test decompression worked
 		err = <-checkErr
 		if err != io.EOF {
 			critical("test decompression error:", err)
 		} else if crc.Sum32() != checkHash {
 			critical("test decompression checksum mismatch")
-		}
-		// write the checksum
-		err = binary.Write(os.Stdout, binary.BigEndian, crc.Sum32())
-		if err != nil {
-			critical("could not write checksum:", err)
 		}
 	}
 }
