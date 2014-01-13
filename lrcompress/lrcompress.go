@@ -287,7 +287,9 @@ func Decompress(historyBits uint, rd io.Reader, w io.Writer) error {
 				} else if err != nil {
 					return err
 				}
-				r.Write(literalBuf[:n])
+				if _, err = r.Write(literalBuf[:n]); err != nil {
+					return err
+				}
 				l -= int64(n)
 			}
 		}
