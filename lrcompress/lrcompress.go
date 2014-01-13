@@ -229,8 +229,10 @@ func (r *ring) Copy(start int64, n int) (err error) {
 		n = N
 		q := int(start & r.mask)
 		// lower piece size (n) if needed
-		if start == r.pos { // unsupported but don't hang forever
-			return errors.New("zero offset for copy unsupported")
+		if start >= r.pos {
+			return errors.New("copy starts at current/future byte")
+		} else if start < 0 || start < r.pos-int64(len(r.ring)) {
+			return errors.New("copy starts too far back")
 		} else if start+int64(n) > r.pos { // src overlaps dest
 			n = int(r.pos - start)
 		}
