@@ -185,8 +185,6 @@ func (c *Compressor) Close() (err error) {
 	return c.putInt(0)
 }
 
-const maxReadLiteral = 1 << 16
-
 // ring is a ring-buffer of bytes with Copy and Write operations. Writes and
 // copies are teed to an io.Writer provided on initialization.
 type ring struct {
