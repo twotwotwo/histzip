@@ -252,6 +252,7 @@ func Decompress(historyBits uint, rd io.Reader, w io.Writer) error {
 	br := bufio.NewReader(rd)
 	r := newRing(historyBits, w)
 	cursor := int64(0)
+	var literalBuf [maxLiteral]byte
 	for {
 		instr, err := binary.ReadVarint(br)
 		if err != nil {
@@ -275,8 +276,19 @@ func Decompress(historyBits uint, rd io.Reader, w io.Writer) error {
 		if instr < 0 { // literal!
 			l := -instr
 			cursor += l
-			if _, err := io.CopyN(&r, br, l); err != nil {
-				return err
+			for l > 0 {
+				chunk := int(l)
+				if chunk > maxLiteral {
+					chunk = maxLiteral
+				}
+				n, err := br.Read(literalBuf[:chunk])
+				if err == io.EOF && n < chunk {
+					return io.ErrUnexpectedEOF
+				} else if err != nil {
+					return err
+				}
+				r.Write(literalBuf[:n])
+				l -= int64(n)
 			}
 		}
 	}
