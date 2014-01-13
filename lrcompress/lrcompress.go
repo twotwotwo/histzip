@@ -220,7 +220,7 @@ func (r *ring) Write(p []byte) (n int, err error) {
 		p = p[l:]
 		r.pos += int64(l)
 	}
-	return len(p), nil
+	return n, nil
 }
 
 // ring.Copy copies old content to the current position. If the copy source
@@ -233,8 +233,6 @@ func (r *ring) Copy(start int64, n int) (err error) {
 		// lower piece size (n) if needed
 		if start == r.pos { // unsupported but don't hang forever
 			return errors.New("zero offset for copy unsupported")
-		} else if n > len(r.ring) {
-			return errors.New("copies limited to length of hist buffer")
 		} else if start+int64(n) > r.pos { // src overlaps dest
 			n = int(r.pos - start)
 		}
@@ -256,7 +254,6 @@ func Decompress(historyBits uint, rd io.Reader, w io.Writer) error {
 	br := bufio.NewReader(rd)
 	r := newRing(historyBits, w)
 	cursor := int64(0)
-	literal := [maxReadLiteral]byte{}
 	for {
 		instr, err := binary.ReadVarint(br)
 		if err != nil {
@@ -280,10 +277,7 @@ func Decompress(historyBits uint, rd io.Reader, w io.Writer) error {
 		if instr < 0 { // literal!
 			l := -instr
 			cursor += l
-			if _, err := io.ReadFull(br, literal[:l]); err != nil {
-				return err
-			}
-			if _, err = r.Write(literal[:l]); err != nil {
+			if _, err := io.CopyN(&r, br, l); err != nil {
 				return err
 			}
 		}
