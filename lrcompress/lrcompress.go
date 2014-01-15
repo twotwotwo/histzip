@@ -4,8 +4,15 @@ import (
 	"bufio"
 	"encoding/binary"
 	"errors"
+	"hash"
 	"io"
+
+	"github.com/vova616/xxhash"
 )
+
+// histzip now uses xxhash rather than CRC32C because CRC made compression speed fall
+// through the floor if your CPU or build didn't support Intel's hardware CRC instr.
+func getChecksum() hash.Hash32 { return xxhash.New(0) }
 
 // ring buffer (yep, size baked in)
 const CompHistBits = 22           // log2 bytes of history for compression
@@ -21,7 +28,7 @@ const fBits = CompHistBits - hBits + 1 // 1/2 fill the table
 // output format choices
 const window = 64          // bytes that must overlap to match
 const maxLiteral = 1 << 16 // we'll write this size literal
-const maxMatch = 1 << 18   // max match we output (we'll read larger)
+const maxMatch = 1 << 18   // max match we output (we'll read 1<<histBits)
 
 type compRing [1 << CompHistBits]byte
 type compHtbl [1 << hBits]int64
@@ -38,11 +45,12 @@ type Compressor struct {
 	literalLen int64     // current literal length or 0
 	encodeBuf  [16]byte  // for varints
 	hTbl       compHtbl  // hashtable holding offsets into source file
+	cksum      hash.Hash32
 }
 
 // Make a compressor with 1<<CompHistBits of memory, writing output to w.
 func NewCompressor(w io.Writer) *Compressor {
-	return &Compressor{w: w, pos: 1, cursor: 1}
+	return &Compressor{w: w, pos: 1, cursor: 1, cksum: getChecksum()}
 }
 
 func (c *Compressor) putInt(i int64) (err error) {
@@ -113,6 +121,7 @@ func (c *Compressor) tryMatch(ring *compRing, pos, literalLen, match int64) (mat
 
 func (c *Compressor) Write(p []byte) (n int, err error) {
 	h, ring, hTbl, pos, matchPos, matchLen, literalLen := c.h, &c.ring, &c.hTbl, c.pos, c.matchPos, c.matchLen, c.literalLen
+	c.cksum.Write(p)
 	for _, b := range p {
 		// can use any 32-bit const with least sig. bits=10b and some higher
 		// bits set; even *=6 eventually mixes lower bits into the top ones
@@ -166,6 +175,8 @@ func (c *Compressor) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
+// Write pending match/literal, end-of-block marker, and checksum, and reset checksum
+// state (but not compressor state)
 func (c *Compressor) Flush() (err error) {
 	if c.matchLen > 0 {
 		err = c.putMatch(c.matchPos, c.matchLen)
@@ -174,36 +185,43 @@ func (c *Compressor) Flush() (err error) {
 		err = c.putLiteral(c.pos, c.literalLen)
 		c.literalLen = 0
 	}
+	if err != nil {
+		return
+	} else if err = c.putInt(0); err != nil {
+		return
+	} else if err = binary.Write(c.w, binary.BigEndian, c.cksum.Sum32()); err != nil {
+		return
+	}
+	c.cksum.Reset()
 	return
 }
 
-// Flush if needed, then write an end marker to the diff output.
 func (c *Compressor) Close() (err error) {
-	if err = c.Flush(); err != nil {
-		return
-	}
-	return c.putInt(0)
+	return c.Flush()
 }
 
 // ring is a ring-buffer of bytes with Copy and Write operations. Writes and
 // copies are teed to an io.Writer provided on initialization.
 type ring struct {
-	pos  int64     // count of bytes ever written
-	mask int64     // &mask turns pos into a ring offset
-	w    io.Writer // output of writes/copies goes here as well as ring
-	ring []byte    // the bytes
+	pos   int64     // count of bytes ever written
+	mask  int64     // &mask turns pos into a ring offset
+	w     io.Writer // output of writes/copies goes here as well as ring
+	ring  []byte    // the bytes
+	cksum hash.Hash32
 }
 
 func newRing(sizeBits uint, w io.Writer) ring {
 	return ring{
-		pos:  0,
-		mask: 1<<sizeBits - 1,
-		w:    w,
-		ring: make([]byte, 1<<sizeBits),
+		pos:   0,
+		mask:  1<<sizeBits - 1,
+		w:     w,
+		ring:  make([]byte, 1<<sizeBits),
+		cksum: getChecksum(),
 	}
 }
 
 func (r *ring) Write(p []byte) (n int, err error) {
+	r.cksum.Write(p)
 	n, err = r.w.Write(p)
 	if err != nil {
 		return
@@ -249,11 +267,15 @@ func (r *ring) Copy(start int64, n int) (err error) {
 	return
 }
 
-// Decompress input from rd to w in one shot. Does not handle framing format.
-func Decompress(historyBits uint, rd io.Reader, w io.Writer) error {
+var WrongChecksum = errors.New("checksum mismatch")
+
+// Decompress a block from rd to w in one shot. Retains state at end.
+func Decompress(historyBits uint, rd io.Reader, w io.Writer) (err error) {
 	br := bufio.NewReader(rd)
 	r := newRing(historyBits, w)
 	cursor := int64(0)
+	maxLen := int64(len(r.ring))
+	blkLen := int64(0)
 	var literalBuf [maxLiteral]byte
 	for {
 		instr, err := binary.ReadVarint(br)
@@ -262,6 +284,9 @@ func Decompress(historyBits uint, rd io.Reader, w io.Writer) error {
 		}
 		if instr > 0 { // copy!
 			l := instr
+			if l > maxLen {
+				return errors.New("copy too long")
+			}
 			cursorMove, err := binary.ReadVarint(br)
 			if err != nil {
 				return err
@@ -271,13 +296,28 @@ func Decompress(historyBits uint, rd io.Reader, w io.Writer) error {
 				return err
 			}
 			cursor += l
+			blkLen += l
 		}
-		if instr == 0 { // end of stream!
-			return io.EOF
+		if instr == 0 { // end of block!
+			if blkLen == 0 {
+				return io.EOF
+			}
+			ckSum := uint32(0)
+			if err = binary.Read(br, binary.BigEndian, &ckSum); err != nil {
+				return err
+			}
+			if r.cksum.Sum32() != ckSum {
+				return WrongChecksum
+			}
+			r.cksum.Reset()
 		}
 		if instr < 0 { // literal!
 			l := -instr
+			if l > maxLen {
+				return errors.New("literal too long")
+			}
 			cursor += l
+			blkLen += l
 			for l > 0 {
 				chunk := int(l)
 				if chunk > maxLiteral {

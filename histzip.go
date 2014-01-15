@@ -4,10 +4,7 @@ package main
 
 import (
 	"bufio"
-	"encoding/binary"
 	"fmt"
-	"hash"
-	"hash/crc32"
 	"io"
 	"io/ioutil"
 	"os"
@@ -19,21 +16,21 @@ import (
 
 const decompressMaxHistBits = 26 // read files w/up to this
 const Sig = "\xAC\x9A\xDC\xF0"   // random
-const VerMajor, VerMinor = 0, 1  // VerMajor++ if not back compat
+const VerMajor, VerMinor = 0, 2  // VerMajor++ if not back compat
+const ChunkSize = 1 << 26
 
 func critical(a ...interface{}) {
-	fmt.Fprintln(os.Stderr, append([]interface{}{"histzip failed:"}, a...)...)
+	fmt.Fprint(os.Stderr, "histzip failed: ")
+	fmt.Fprintln(os.Stderr, a...)
 	os.Exit(255)
 }
 
 func exitWithUsage(reason string) {
 	fmt.Fprintln(os.Stderr, "histzip exiting:", reason)
-	fmt.Fprintln(os.Stderr, "to compress:   ./histzip < uncompressed.xml | bzip2 > compressed.hbz")
-	fmt.Fprintln(os.Stderr, "to decompress: bunzip2 < compressed.hbz | ./histzip > uncompressed.xml")
+	fmt.Fprintln(os.Stderr, "to compress:   "+os.Args[0]+" < uncompressed.xml | bzip2 > compressed.hbz")
+	fmt.Fprintln(os.Stderr, "to decompress: bunzip2 < compressed.hbz | "+os.Args[0]+" > uncompressed.xml")
 	os.Exit(255)
 }
-
-func crc32c() hash.Hash32 { return crc32.New(crc32.MakeTable(crc32.Castagnoli)) }
 
 func rejectZippedInput(header string) {
 	badSigs := []string{"BZh", "7z", "\x1F\x8B", "PK", "\xFD7zXZ"}
@@ -46,6 +43,8 @@ func rejectZippedInput(header string) {
 
 // main() handles the framing format including checksums, and self-tests
 func main() {
+
+	// MAKE SURE WE'RE INVOKED RIGHT AND GET SOME INFO
 	if len(os.Args) > 1 {
 		exitWithUsage("can't take any files or switches on command line; just pipe in input and redirect to output")
 	}
@@ -57,84 +56,86 @@ func main() {
 	}()
 	br := bufio.NewReader(os.Stdin)
 	headBytes, err := br.Peek(8)
-	crc := crc32c()
 	if err != nil {
 		exitWithUsage("couldn't read input on stdin (" + err.Error() + ")")
 	}
 	head := string(headBytes)
 	rejectZippedInput(head)
-	if head[:4] == Sig {
-		bits, vermajor, extra := uint(head[4]), int(head[5]), int(head[7])
+
+	if head[:4] == Sig { // decompress
+		bits, vermajor, _, extra := uint(head[4]), int(head[5]), int(head[6]), int(head[7])
 		if vermajor > VerMajor {
 			critical("file uses a newer version of format; upgrade, please")
 		} else if bits > decompressMaxHistBits {
 			critical("file would need", 1<<(bits-20), "MB RAM for decompression (if that's OK, recompile with decompHistBits increased)")
 		}
-		for i := 0; i < extra+8; i++ {
+		for i := 0; i < extra+8; i++ { // skip extra data
 			_, err = br.ReadByte()
 			if err != nil {
 				critical(err)
 			}
 		}
 		bw := bufio.NewWriter(os.Stdout)
-		mw := io.MultiWriter(bw, crc)
-		err := lrcompress.Decompress(bits, br, mw)
+		err := lrcompress.Decompress(bits, br, bw)
 		if err != io.EOF {
 			critical(err)
 		} else if err = bw.Flush(); err != nil {
 			critical(err)
 		}
-		ckSum := uint32(0)
-		err = binary.Read(br, binary.BigEndian, &ckSum)
-		if err != io.EOF { // checksum optional
-			if err != nil {
-				critical("error reading checksum:", err)
-			}
-			ok := ckSum == crc.Sum32()
-			if !ok {
-				critical("checksum mismatch")
-			}
-		}
-	} else {
+	} else { // compress
+		// WRITE HEADER
 		header := append([]byte{}, Sig...)
 		header = append(header, lrcompress.CompHistBits, VerMajor, VerMinor, 0)
 		if _, err := os.Stdout.Write(header); err != nil {
 			critical("could not write header")
 		}
+
 		// go decompress and checksum
-		checkHash, checkErr := uint32(0), make(chan error)
+		checkErr := make(chan error)
 		pr, pw := io.Pipe()
 		w := io.MultiWriter(os.Stdout, pw)
 		go func() {
-			err := error(nil)
-			check := crc32c()
-			err = lrcompress.Decompress(lrcompress.CompHistBits, pr, check)
-			checkHash = check.Sum32()
-			go io.Copy(ioutil.Discard, pr)
+			err := lrcompress.Decompress(lrcompress.CompHistBits, pr, ioutil.Discard)
+			go io.Copy(ioutil.Discard, pr) // ensure pipe drained even on err
 			checkErr <- err
 		}()
+
 		// compress
 		bw := bufio.NewWriter(w)
 		c := lrcompress.NewCompressor(bw)
-		tr := io.TeeReader(br, crc)
-		if _, err = io.Copy(c, tr); err != nil {
-			critical(err)
-		} else if err = c.Close(); err != nil {
-			critical(err)
-		} else if err = bw.Flush(); err != nil {
+		for {
+			_, err := io.CopyN(c, br, ChunkSize)
+			if err != nil { // something special happened
+				if err == io.EOF { // end of input
+					if err = c.Flush(); err != nil { // finish block
+						critical(err)
+					} else if err = c.Flush(); err != nil { // write empty block
+						critical(err)
+					}
+					break // we're done
+				} else if err != nil { // read/write error, bail out
+					critical(err)
+				}
+			}
+			// nothing special happened; just flush
+			if err = c.Flush(); err != nil {
+				critical(err)
+			}
+			// look for any test decompress errors mid-stream
+			select {
+			case err = <-checkErr: // bah; even EOF shouldn't happen yet here, so die
+				critical("test decompression error:", err)
+			default:
+			}
+		}
+		if err = bw.Flush(); err != nil {
 			critical(err)
 		}
-		// write the checksum
-		err = binary.Write(os.Stdout, binary.BigEndian, crc.Sum32())
-		if err != nil {
-			critical("could not write checksum:", err)
-		}
+		pw.Close()
 		// verify the test decompression worked
 		err = <-checkErr
 		if err != io.EOF {
 			critical("test decompression error:", err)
-		} else if crc.Sum32() != checkHash {
-			critical("test decompression checksum mismatch")
 		}
 	}
 }
