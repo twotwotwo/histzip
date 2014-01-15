@@ -38,13 +38,13 @@ output Length bytes from CopyOffset bytes ago in the history
   decompressors must produce repeats.  For example, a copy with length 5 
   starting 2 bytes before the current output position should output "ababa" if the
   last two bytes were "ab".  This is the output you'd get from a naive loop copying 
-  one byte at a time (but not what you'd from, for instance, memmove).
+  one byte at a time (but not what you'd get from, for instance, memmove).
 
 * 'end-of-block' instructions are a zero, followed by a checksum, which is an xxHash 
   sum with seed 0 written in big-endian order. At end of block, the checksum state is 
   reset but not the (de)compressor state. An empty block marks the end of the stream.
-  Compressors must be sure not to write zero- length copies or literals, or they'll be 
-  misread as end-of-block markers, or to write an empty block before end of stream. 
+  Compressors must be sure not to write zero-length copies or literals, or they'll be 
+  misread as end-of-block markers, and not to write empty blocks before end of stream. 
 
 * Some little things:
 
