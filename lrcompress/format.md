@@ -50,26 +50,25 @@ output Length bytes from CopyOffset bytes ago in the history
 
 	* Extra content after the empty block marking the end-of-stream is OK, and might
 	  actually be used by future versions of histzip. The decompressor also shouldn't 
-	  count on histzip continuing to produce consistently sized blocks as it does now,
-	  or on decompressed blocks continuing to be small enough to fit in memory.
+	  count on input containing consistently sized blocks, or blocks small enough 
+	  that the unpacked data fits in memory. 
 
-	* The decompressor might encounter copy instructions that are syntactically valid but 
-	  have a nonsense starting offset: before the beginning of the file, or more than 
-	  a history buffer length ago, or "in the future" (i.e., after the last byte 
-	  that's been output). It should cleanly error out on encountering any 
-	  of those.
+	* Corrupt input might have copy instructions with a nonsense starting 
+	  offset: before the beginning of the file, or more than a history buffer 
+	  length ago, or "in the future" (i.e., after the last output byte). The 
+	  decompressor should cleanly throw an error on reading any of those.
 	
-	* The decompressor may reject copy or literal instructions with lengths greater than 
-	  the size of the history buffer. (Allowing those lengths doesn't achieve 
-	  noticeably better compression anyway, and setting some limit prevents you from 
-	  copying out gigs of data because you received corrupt input.) They can optimize 
-	  for the shorter max lengths that histzip currently emits: 64kb for literals, 
-	  256kb for copies. 
+	* The decompressor may also error on reading a copy or literal length greater
+	  than the size of the history buffer. Allowing huge lengths doesn't achieve 
+	  noticeably better compression anyway, and erroring out prevents writing 
+	  GBs of uncompressed output because a few corrupt bytes were read as a long 
+	  copy. The decompressor can also optimize for the shorter max lengths that 
+	  histzip currently emits: 64kb for literals, 256kb for copies. 
 	
 	* End of file in the middle of a block is an error.
 	
-	* A decompressor built for a 32-bit architecture must work on files over 4GB, of 
-	  course.
+	* It should go without saying, but files and blocks over 4GB need to be supported,
+	  including by builds for 32-bit architectures.
 
 * If you're reading the histzip source, note that instead of tracking `CopyOffset`, 
   histzip tracks a value it calls `cursor`, which is the current output position minus 
