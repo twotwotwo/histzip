@@ -25,9 +25,7 @@ To decompress:
 
 That tends to work fastest and compress best when handling lots of revisions with mostly unchanged content. Running histzip|bzip on the newest/oldest chunks of the English Wikipedia's history, speed ranged from 51 to 151 MB/s, and compression ratios were roughly similar to [7zip]'s, between 8% worse and 10% better.
 
-While compressing, histzip decompresses its output as a self-check.  If it fails, you'll see
-text like "histzip failed: test decompression error: _reason_". This means [you are having
-a bad problem and you will not go to space today][8]; contact me so we can figure out what's up.  It's crunched lots of data without incident, but anything can happen.
+While compressing, histzip decompresses its output and compares checksums as a self-check.  
 
 There are write-ups attempting to describe [the framing format][framing] and [the format for compressed 
 data][lrcompress-format]. You can use the same compression engine in other programs via the histzip/lrcompress library.
@@ -46,5 +44,7 @@ If you're interested in long-range compression, there are other projects that mi
 [gitdiff]: https://github.com/git/git/blob/master/diff-delta.c
 [xdelta]: http://xdelta.org/
 [open-vcdiff]: https://code.google.com/p/open-vcdiff/
+
+If you have any trouble or questions, get in touch!
 
 Public domain, Randall Farmer, 2013-4.
