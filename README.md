@@ -1,9 +1,7 @@
 histzip
 =======
 
-Quickly compress wiki change dumps and files like them. Compresses files with
-long repeated sections (100+ bytes) relatively long distances apart (up to a
-few MB). 
+Compress wiki change histories, etc. Made for any input with long duplicated sections (100+ bytes) up to a few MB apart.
 
 **Download binaries** for [Linux amd64][1], [Linux x86][3], [Windows 64-bit][4]
 and [32-bit][5], and [Mac 64-bit][6].  For faster compression try the [gccgo Linux amd64][2] build.
@@ -23,7 +21,7 @@ Turn that around to decompress:
 
 > bunzip2 < revisions.xml.hbz | ./histzip > revisions.xml
 
-Running on dumps of English Wikipedia's history, the pipeline ran at 51 MB/s for the newest chunk and 151 MB/s for the oldest. Compression ratios were comparable to [7zip]'s: 8% worse for the new chunk and 10% better for the old chunk.
+Running on dumps of English Wikipedia's history, that pipeline ran at 51 MB/s for the newest chunk and 151 MB/s for the oldest. Compression ratios were comparable to [7zip]'s: 8% worse for the new chunk and 10% better for the old chunk.
 
 While compressing, histzip decompresses its output and compares checksums as a self-check.  There are write-ups of [the framing format][framing] and [the format for compressed data][lrcompress-format]. You can use the same compression engine in other programs via the histzip/lrcompress library.
 
