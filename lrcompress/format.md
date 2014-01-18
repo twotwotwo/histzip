@@ -40,18 +40,21 @@ output Length bytes from CopyOffset bytes ago in the history
   last two bytes were "ab".  This is the output you'd get from a naive loop copying 
   one byte at a time (but not what you'd get from, for instance, memmove).
 
-* 'end-of-block' instructions are a zero, followed by a checksum, which is an xxHash 
-  sum with seed 0 written in big-endian order. At end of block, the checksum state is 
-  reset but not the (de)compressor state. An empty block marks the end of the stream.
-  Compressors must be sure not to write zero-length copies or literals, or they'll be 
-  misread as end-of-block markers, and not to write empty blocks before end of stream. 
+* 'end-of-block' instructions are a zero, followed by a checksum, which is an [xxHash] 
+  sum of the uncompressed output with seed 0, written in big-endian order. At end of 
+  block, the checksum state is reset but not the (de)compressor state. An empty block 
+  marks the end of the stream. Compressors must be sure not to write zero-length copies 
+  or literals, or they'll be misread as end-of-block markers, and not to write empty b
+  locks before end of stream. 
 
-* Some little things:
+[xxHash]: https://code.google.com/p/xxhash/
 
-	* Extra content after the empty block marking the end-of-stream is OK, and might
-	  actually be used by future versions of histzip. The decompressor also shouldn't 
-	  count on input containing consistently sized blocks, or blocks small enough 
-	  that the unpacked data fits in memory. 
+* Blocks are *only* points to check the checksum and reset its state. They aren't 
+  necessarily sized to fit in memory; a compressor could use a single block for a 
+  100GB file.
+
+* The decompressor should gracefully error out on certain kinds of corrupt compressed
+  input:
 
 	* Corrupt input might have copy instructions with a nonsense starting 
 	  offset: before the beginning of the file, or more than a history buffer 
@@ -67,8 +70,8 @@ output Length bytes from CopyOffset bytes ago in the history
 	
 	* End of file in the middle of a block is an error.
 	
-	* It should go without saying, but files and blocks over 4GB need to be supported,
-	  including by builds for 32-bit architectures.
+* It should go without saying, but support for files and blocks over 4GB is necesary 
+  even on builds for 32-bit systems.
 
 * If you're reading the histzip source, note that instead of tracking `CopyOffset`, 
   histzip tracks a value it calls `cursor`, which is the current output position minus 
