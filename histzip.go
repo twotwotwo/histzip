@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/twotwotwo/histzip/lrcompress"
+	"github.com/vova616/xxhash"
 )
 
 const decompressMaxHistBits = 26 // read files w/up to this
@@ -76,7 +77,7 @@ func main() {
 			}
 		}
 		bw := bufio.NewWriter(os.Stdout)
-		err := lrcompress.Decompress(bits, br, bw)
+		_, err := lrcompress.NewDecompressor(br, bits, xxhash.New(0)).CopyUntilEmpty(bw)
 		if err != io.EOF {
 			critical(err)
 		} else if err = bw.Flush(); err != nil {
@@ -95,21 +96,19 @@ func main() {
 		pr, pw := io.Pipe()
 		w := io.MultiWriter(os.Stdout, pw)
 		go func() {
-			err := lrcompress.Decompress(lrcompress.CompHistBits, pr, ioutil.Discard)
+			_, err := lrcompress.NewDecompressor(pr, lrcompress.CompHistBits, xxhash.New(0)).CopyUntilEmpty(ioutil.Discard)
 			go io.Copy(ioutil.Discard, pr) // ensure pipe drained even on err
 			checkErr <- err
 		}()
 
 		// compress
 		bw := bufio.NewWriter(w)
-		c := lrcompress.NewCompressor(bw)
+		c := lrcompress.NewCompressor(bw, xxhash.New(0))
 		for {
 			_, err := io.CopyN(c, br, ChunkSize)
 			if err != nil { // something special happened
 				if err == io.EOF { // end of input
-					if err = c.Flush(); err != nil { // finish block
-						critical(err)
-					} else if err = c.Flush(); err != nil { // write empty block
+					if err = c.EndBlock(); err != nil { // finish block
 						critical(err)
 					}
 					break // we're done
@@ -118,7 +117,7 @@ func main() {
 				}
 			}
 			// nothing special happened; just flush
-			if err = c.Flush(); err != nil {
+			if err = c.EndBlock(); err != nil {
 				critical(err)
 			}
 			// look for any test decompress errors mid-stream
@@ -128,7 +127,9 @@ func main() {
 			default:
 			}
 		}
-		if err = bw.Flush(); err != nil {
+		if err = c.Close(); err != nil {
+			critical(err)
+		} else if err = bw.Flush(); err != nil {
 			critical(err)
 		}
 		pw.Close()

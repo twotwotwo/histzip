@@ -21,4 +21,4 @@ The histzip framing format consists of:
 [lrcompress format]: lrcompress/format.md
 
 Future versions may use the "extra data" in the header or append content after the 
-lrcompress data to extend the format without breaking backwards compatibility.
+lrcompress data to extend the format without breaking backwards compatibility.	

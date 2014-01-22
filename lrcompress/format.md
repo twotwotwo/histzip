@@ -40,12 +40,11 @@ output Length bytes from CopyOffset bytes ago in the history
   last two bytes were "ab".  This is the output you'd get from a naive loop copying 
   one byte at a time (but not what you'd get from, for instance, memmove).
 
-* 'end-of-block' instructions are a zero, followed by a checksum, which is an [xxHash] 
-  sum of the uncompressed output with seed 0, written in big-endian order. At end of 
+* 'end-of-block' instructions are a zero, followed by a checksum, which for histzip is an [xxHash] 
+  sum of the uncompressed output with seed 0, written in big-endian order. (Other applications can use their own checksums or none.) At end of 
   block, the checksum state is reset but not the (de)compressor state. An empty block 
   marks the end of the stream. Compressors must be sure not to write zero-length copies 
-  or literals, or they'll be misread as end-of-block markers, and not to write empty b
-  locks before end of stream. 
+  or literals, or they'll be misread as end-of-block markers, and not to write empty blocks before end of stream. 
 
 [xxHash]: https://code.google.com/p/xxhash/
 
@@ -77,6 +76,11 @@ output Length bytes from CopyOffset bytes ago in the history
   histzip tracks a value it calls `cursor`, which is the current output position minus 
   `CopyOffset`. It also uses the name  `cursorMove` for what this description calls 
   `Advance`. The results are  the same. 
+
+* As an implementation note/disclaimer: `lrcompress` has some APIs not exercised by 
+  histzip (`Reset` to reuse a (de)compressor, `Load` to load dictionary data, etc.)
+  and therefore not all that well-tested. Also, it's likely some things return io.EOF
+  that should return io.ErrUnexpectedEOF. Caveat emptor, and tell me about bugs.
 
 * The framing format/application is responsible for everything not covered here, such 
   as any magic numbers, versioning, and metadata.
