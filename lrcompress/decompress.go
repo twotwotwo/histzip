@@ -43,6 +43,7 @@ func NewDecompressor(r io.Reader, sizeBits uint, h hash.Hash) *Decompressor {
 	}
 }
 
+// Load dictionary content.
 func (d *Decompressor) Load(p []byte) {
 	d.cksum.Write(p)
 	for len(p) > 0 {

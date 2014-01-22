@@ -175,7 +175,7 @@ func (c *Compressor) Reset() {
 	c.matchPos, c.matchLen, c.literalLen = 0, 0, 0
 }
 
-// Loads dict content. Does not update checksum. Call only after init or Reset.
+// Loads dict content. Call only after init or Reset.
 func (c *Compressor) Load(p []byte) {
 	h, ring, hTbl, pos := c.h, &c.ring, &c.hTbl, c.pos
 	c.cksum.Write(p)
