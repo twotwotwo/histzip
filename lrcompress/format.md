@@ -42,15 +42,24 @@ output Length bytes from CopyOffset bytes ago in the history
 
 * 'end-of-block' instructions are a zero, followed by a checksum, which for histzip is an [xxHash] 
   sum of the uncompressed output with seed 0, written in big-endian order. (Other applications can use their own checksums or none.) At end of 
-  block, the checksum state is reset but not the (de)compressor state. An empty block 
+  block, the checksum state is reset and `CopyOffset` is zeroed, but the history buffer is not cleared. An empty block 
   marks the end of the stream. Compressors must be sure not to write zero-length copies 
   or literals, or they'll be misread as end-of-block markers, and not to write empty blocks before end of stream. 
 
 [xxHash]: https://code.google.com/p/xxhash/
 
-* Blocks are *only* points to check the checksum and reset its state. They aren't 
+* The application can use blocks more or less however it wants, and they're not 
   necessarily sized to fit in memory; a compressor could use a single block for a 
   100GB file.
+
+* Applications may load "dictionary" content into the history, which is checksummed
+  like normal content. This does not affect `CopyOffset`, so in diff-like applications
+  the first copy instruction will probably have a large negative offset.
+
+* This version of the lrcompress library happens to produce output with some additional 
+  constraints (for example, copies have a minimum length and starting offsets don't go 
+  as far back as they possibly could). Decompressors shouldn't rely on those quirks, 
+  since they might be dropped later on to simplify or for other reasons.
 
 * The decompressor should gracefully error out on certain kinds of corrupt compressed
   input:
@@ -75,12 +84,11 @@ output Length bytes from CopyOffset bytes ago in the history
 * If you're reading the histzip source, note that instead of tracking `CopyOffset`, 
   histzip tracks a value it calls `cursor`, which is the current output position minus 
   `CopyOffset`. It also uses the name  `cursorMove` for what this description calls 
-  `Advance`. The results are  the same. 
+  `Advance`. The results are the same. 
 
 * As an implementation note/disclaimer: `lrcompress` has some APIs not exercised by 
   histzip (`Reset` to reuse a (de)compressor, `Load` to load dictionary data, etc.)
-  and therefore not all that well-tested. Also, it's likely some things return io.EOF
-  that should return io.ErrUnexpectedEOF. Caveat emptor, and tell me about bugs.
+  and therefore not all that well-tested. Caveat emptor, and tell me about bugs.
 
 * The framing format/application is responsible for everything not covered here, such 
   as any magic numbers, versioning, and metadata.

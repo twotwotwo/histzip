@@ -9,41 +9,60 @@ import (
 	"io"
 )
 
-type BufIOLike interface {
+type bufIOLike interface {
 	io.ByteReader
 	io.Reader
 }
 
-// Decompressor is a Decompressor-buffer of bytes with Copy and Write operations. Writes and
-// copies are teed to an io.Writer provided on initialization.
+// Decompressor copies decompressed content to a Writer.
 type Decompressor struct {
 	pos    int64     // count of bytes ever written
-	cursor int64     // is same distance back from pos as the last copy was
 	mask   int64     // &mask turns pos into a Decompressor offset
 	w      io.Writer // output of writes/copies goes here as well as Decompressor
 	ring   []byte    // the bytes
-	br     BufIOLike
+	br     bufIOLike
 	cksum  hash.Hash
 	sumBuf []byte
 	sumIn  []byte
+	concat bool // reading one block or any number of concatenated ones?
+	io.Reader
 }
 
-func NewDecompressor(r io.Reader, sizeBits uint, h hash.Hash) *Decompressor {
-	br, ok := r.(BufIOLike)
+// Makes decompressor. sizeBits is the log2 of the history buffer size (default
+// 22 for histzip). h is an optional but recommended checksum function like those in
+// hash/crc32. concat is a flag saying whether to read until encountering an empty
+// block (if true) or return io.EOF after one block (false; then you can call
+// StartRead() to read another block if you wish).
+func NewDecompressor(r io.Reader, sizeBits uint, h hash.Hash, concat bool) *Decompressor {
+	// Caller ought to be able to read bytes in between blocks for its own nefarious
+	// purposes, so I should leave existing ByteReaders alone. Else NewReader
+	br, ok := r.(bufIOLike)
 	if !ok {
 		br = bufio.NewReader(r)
 	}
+	if h == nil {
+		h = noChecksum{}
+	}
 	return &Decompressor{
-		br:    br,
-		pos:   0,
-		mask:  1<<sizeBits - 1,
-		ring:  make([]byte, 1<<sizeBits),
-		cksum: h,
-		sumIn: make([]byte, h.Size()),
+		br:     br,
+		pos:    0,
+		mask:   1<<sizeBits - 1,
+		ring:   make([]byte, 1<<sizeBits),
+		cksum:  h,
+		sumIn:  make([]byte, h.Size()),
+		concat: concat,
 	}
 }
 
-// Load dictionary content.
+// Clear state for reuse.
+func (d *Decompressor) Reset() {
+	d.pos = 0
+	d.cksum.Reset()
+	d.Reader = nil
+}
+
+// Load dictionary content. Compressor and decompressor must load byte-identical
+// content at the same time, of course.
 func (d *Decompressor) Load(p []byte) {
 	d.cksum.Write(p)
 	for len(p) > 0 {
@@ -67,8 +86,8 @@ func (d *Decompressor) write(p []byte) (n int, err error) {
 	return n, nil
 }
 
-// Decompressor.Copy copies old content to the current position. If the copy source
-// overlaps the destination, Copy will produce repeats.
+// Copy old content to the current position. If the copy source overlaps the
+// destination, will produce repeats.
 func (d *Decompressor) copy(start int64, n int) (err error) {
 	N := n
 	for N > 0 && err == nil {
@@ -97,9 +116,9 @@ func (d *Decompressor) copy(start int64, n int) (err error) {
 
 var WrongChecksum = errors.New("checksum mismatch")
 
-// Decompress a block from rd to w in one shot. Retains state at end.
-func (d *Decompressor) CopyBlock(w io.Writer) (blkLen int64, err error) {
-	cursor := d.cursor
+// Decompress a block from rd to w in one shot, retaining state at end.
+func (d *Decompressor) copyBlk(w io.Writer) (blkLen int64, err error) {
+	cursor := d.pos
 	br := d.br
 	d.w = w
 	maxLen := int64(len(d.ring))
@@ -133,7 +152,6 @@ func (d *Decompressor) CopyBlock(w io.Writer) (blkLen int64, err error) {
 			if !bytes.Equal(d.sumBuf, d.sumIn) {
 				return blkLen, WrongChecksum
 			}
-			d.cursor = cursor
 			d.cksum.Reset()
 			return blkLen, nil
 		}
@@ -162,44 +180,53 @@ func (d *Decompressor) CopyBlock(w io.Writer) (blkLen int64, err error) {
 	}
 }
 
-func (d *Decompressor) CopyUntilEOF(w io.Writer) (written int64, err error) {
+// Copy somewhere until you hit an empty block (like histzip does)
+func (d *Decompressor) copyUntilEmpty(w io.Writer) (written int64, err error) {
 	for err == nil {
 		var n int64
-		n, err = d.CopyBlock(w)
-		written += n
-	}
-	return
-}
-
-func (d *Decompressor) CopyUntilEmpty(w io.Writer) (written int64, err error) {
-	for err == nil {
-		var n int64
-		n, err = d.CopyBlock(w)
-		if n == 0 {
-			return written, io.EOF
+		n, err = d.copyBlk(w)
+		if n == 0 && err != nil {
+			return written, nil
 		}
 		written += n
 	}
 	return
 }
 
-// Reader that stops after one block
-func (d *Decompressor) BlockReader() io.Reader {
-	pr, pw := io.Pipe()
-	go func() { _, err := d.CopyBlock(pw); pw.CloseWithError(err) }()
-	return pr
+// More efficient alternative to Read when appropriate.
+func (d *Decompressor) WriteTo(w io.Writer) (written int64, err error) {
+	if d.concat {
+		written, err = d.copyUntilEmpty(w)
+	} else {
+		written, err = d.copyBlk(w)
+	}
+	if err == io.EOF {
+		err = io.ErrUnexpectedEOF
+	}
+	return
 }
 
-// Reader that goes until EOF
-func (d *Decompressor) UntilEOFReader() io.Reader {
-	pr, pw := io.Pipe()
-	go func() { _, err := d.CopyUntilEOF(pw); pw.CloseWithError(err) }()
-	return pr
+// Read decompressed content. If concat is false, this will return io.EOF at the end
+// of a block, and you can then call StartRead() to start on the next block. Reads
+// will often less than fill the buffer, and using io.Copy or WriteTo is usually 
+// more efficient.
+func (d *Decompressor) Read(p []byte) (n int, err error) {
+	if d.Reader == nil {
+		d.StartRead()
+	}
+	return d.Reader.Read(p)
 }
 
-// Reader that goes until empty block
-func (d *Decompressor) UntilEmptyReader() io.Reader {
+// See Read(): if concat was set to false in NewDecompressor, call this to start on
+// the next block.
+func (d *Decompressor) StartRead() {
 	pr, pw := io.Pipe()
-	go func() { _, err := d.CopyUntilEmpty(pw); pw.CloseWithError(err) }()
-	return pr
+	go func() {
+		_, err := d.WriteTo(pw)
+		if err == nil {
+			err = io.EOF
+		}
+		pw.CloseWithError(err)
+	}()
+	d.Reader = pr
 }

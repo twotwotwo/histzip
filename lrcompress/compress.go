@@ -6,7 +6,9 @@ import (
 	"io"
 )
 
-// ring buffer (yep, size baked in)
+// Buffer size for compression, determined at compile time. Using a constant size
+// lets us use arrays (rather than slices) and make some other values constant, which
+// noticeably helped compression speed in tests.
 const CompHistBits = 22           // log2 bytes of history for compression
 const rMask = 1<<CompHistBits - 1 // &rMask turns offset into ring pos
 
@@ -25,6 +27,14 @@ const maxMatch = 1 << 18   // max match we output (we'll read 1<<histBits)
 type compRing [1 << CompHistBits]byte
 type compHtbl [1 << hBits]int64
 
+type noChecksum struct{}
+
+func (c noChecksum) Write(p []byte) (n int, err error) { return len(p), nil }
+func (c noChecksum) Sum(b []byte) []byte               { return b }
+func (c noChecksum) Reset()                            { return }
+func (c noChecksum) Size() int                         { return 0 }
+func (c noChecksum) BlockSize() int                    { return 1 }
+
 // Compressor is a Writer into which you can dump content.
 type Compressor struct {
 	pos        int64     // count of bytes ever written
@@ -42,8 +52,12 @@ type Compressor struct {
 	sumBuf     []byte
 }
 
-// Make a compressor with 1<<CompHistBits of memory, writing output to w.
+// Make a compressor with 1<<CompHistBits of memory, writing output to w, with h
+// as your checksum (h can be nil but that's' rarely what you want).
 func NewCompressor(w io.Writer, h hash.Hash) *Compressor {
+	if h == nil {
+		h = noChecksum{}
+	}
 	return &Compressor{w: w, minMatch: 1, pos: 1, cursor: 1, cksum: h}
 }
 
@@ -113,6 +127,8 @@ func (c *Compressor) tryMatch(ring *compRing, pos, literalLen, minMatch, match i
 	}
 }
 
+// Compress content. Flush or Close once you're done, or not everything will be
+// written.
 func (c *Compressor) Write(p []byte) (n int, err error) {
 	h, ring, hTbl, pos, matchPos, matchLen, literalLen, minMatch := c.h, &c.ring, &c.hTbl, c.pos, c.matchPos, c.matchLen, c.literalLen, c.minMatch
 	c.cksum.Write(p)
@@ -169,10 +185,12 @@ func (c *Compressor) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
-// Clear packer state. Flush first.
+// Clear packer state for reuse. You should Flush and/or Close first. Delimit()
+// followed by Reset() creates a point in the output where you could insert another
+// block of content without causing corruption.
 func (c *Compressor) Reset() {
-	c.minMatch, c.cursor = c.pos, c.pos
-	c.matchPos, c.matchLen, c.literalLen = 0, 0, 0
+	c.Flush()
+	c.minMatch = c.pos
 }
 
 // Loads dict content. Call only after init or Reset.
@@ -192,11 +210,12 @@ func (c *Compressor) Load(p []byte) {
 		}
 		pos++
 	}
-	c.h, c.pos = h, pos
+	c.h, c.pos, c.cursor = h, pos, pos
 	return
 }
 
-// Flush any pending match/literal
+// Writes out any pending match/literal. If the underlying Writer itself needs flushed
+// (e.g., it's buffered), flush it as well.
 func (c *Compressor) Flush() (err error) {
 	if c.matchLen > 0 {
 		err = c.putMatch(c.matchPos, c.matchLen)
@@ -208,8 +227,9 @@ func (c *Compressor) Flush() (err error) {
 	return
 }
 
-// Flush and write \0 end-of-block marker and checksum, and clear checksum state.
-func (c *Compressor) EndBlock() (err error) {
+// Flushes, writes end-of-block marker, and clears checksum and cursor state but not
+// history.
+func (c *Compressor) Delimit() (err error) {
 	c.Flush()
 	c.sumBuf = c.cksum.Sum(c.sumBuf[:0])
 	if err = c.putInt(0); err != nil {
@@ -217,10 +237,12 @@ func (c *Compressor) EndBlock() (err error) {
 	} else if _, err = c.w.Write(c.sumBuf); err != nil {
 		return
 	}
+	c.cursor = c.pos
 	c.cksum.Reset()
 	return
 }
 
+// Writes an end-of-block marker; does not Flush or Close underlying writer.
 func (c *Compressor) Close() (err error) {
-	return c.EndBlock()
+	return c.Delimit()
 }

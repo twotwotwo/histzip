@@ -64,7 +64,7 @@ func main() {
 	rejectZippedInput(head)
 
 	if head[:4] == Sig { // decompress
-		bits, vermajor, _, extra := uint(head[4]), int(head[5]), int(head[6]), int(head[7])
+		bits, vermajor, verminor, extra := uint(head[4]), int(head[5]), int(head[6]), int(head[7])
 		if vermajor > VerMajor {
 			critical("file uses a newer version of format; upgrade, please")
 		} else if bits > decompressMaxHistBits {
@@ -77,8 +77,8 @@ func main() {
 			}
 		}
 		bw := bufio.NewWriter(os.Stdout)
-		_, err := lrcompress.NewDecompressor(br, bits, xxhash.New(0)).CopyUntilEmpty(bw)
-		if err != io.EOF {
+		_, err := io.Copy(bw, lrcompress.NewDecompressor(br, bits, xxhash.New(0), true))
+		if err != nil && !(err == io.ErrUnexpectedEOF && verminor == 0) {
 			critical(err)
 		} else if err = bw.Flush(); err != nil {
 			critical(err)
@@ -86,7 +86,7 @@ func main() {
 	} else { // compress
 		// WRITE HEADER
 		header := append([]byte{}, Sig...)
-		header = append(header, lrcompress.CompHistBits, VerMajor, VerMinor, 0)
+		header = append(header, byte(lrcompress.CompHistBits), VerMajor, VerMinor, 0)
 		if _, err := os.Stdout.Write(header); err != nil {
 			critical("could not write header")
 		}
@@ -96,8 +96,9 @@ func main() {
 		pr, pw := io.Pipe()
 		w := io.MultiWriter(os.Stdout, pw)
 		go func() {
-			_, err := lrcompress.NewDecompressor(pr, lrcompress.CompHistBits, xxhash.New(0)).CopyUntilEmpty(ioutil.Discard)
-			go io.Copy(ioutil.Discard, pr) // ensure pipe drained even on err
+			d := lrcompress.NewDecompressor(pr, lrcompress.CompHistBits, xxhash.New(0), true)
+			_, err := d.WriteTo(ioutil.Discard) // Discard's ReadFrom hurts perf here
+			go io.Copy(ioutil.Discard, pr)      // ensure pipe drained even on err
 			checkErr <- err
 		}()
 
@@ -108,7 +109,7 @@ func main() {
 			_, err := io.CopyN(c, br, ChunkSize)
 			if err != nil { // something special happened
 				if err == io.EOF { // end of input
-					if err = c.EndBlock(); err != nil { // finish block
+					if err = c.Delimit(); err != nil { // finish block
 						critical(err)
 					}
 					break // we're done
@@ -116,8 +117,8 @@ func main() {
 					critical(err)
 				}
 			}
-			// nothing special happened; just flush
-			if err = c.EndBlock(); err != nil {
+			// nothing special happened; just do next block
+			if err = c.Delimit(); err != nil {
 				critical(err)
 			}
 			// look for any test decompress errors mid-stream
@@ -127,7 +128,7 @@ func main() {
 			default:
 			}
 		}
-		if err = c.Close(); err != nil {
+		if err = c.Close(); err != nil { // writes a final end-of-block
 			critical(err)
 		} else if err = bw.Flush(); err != nil {
 			critical(err)
@@ -135,7 +136,7 @@ func main() {
 		pw.Close()
 		// verify the test decompression worked
 		err = <-checkErr
-		if err != io.EOF {
+		if err != nil {
 			critical("test decompression error:", err)
 		}
 	}
