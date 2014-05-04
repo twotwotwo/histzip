@@ -29,7 +29,7 @@ While compressing, histzip decompresses its output and compares checksums as a s
 [framing]: format.md
 [lrcompress-format]: lrcompress/format.md
 
-If you're interested in long-range compression, some other projects might interest you. [rzip] is awesome; histzip lifts some implementation tricks directly from it. [bm] is a [Bentley-McIlroy][bmpaper] library by CloudFlare also written in Go, compressing matches against a fixed dictionary (in essence, performing a binary diff). [Git][gitdiff], [xdelta], and [open-vcdiff] also each have open-source binary diff implementations.
+If you're interested in long-range compression, some other projects might interest you. [rzip] is awesome; histzip lifts some implementation tricks directly from it. [bm] is a [Bentley-McIlroy][bmpaper] library by CloudFlare also written in Go, compressing matches against a fixed dictionary (in essence, performing a binary diff). [Git][gitdiff], [xdelta], and [open-vcdiff] also each have open-source binary diff implementations. Google's [Brotli][brotli] compressor is a tuned flate variant using a 4MB window, released for potential use in the [WOFF 2.0][woff20] standard.
 
 [rzip]: http://rzip.samba.org/
 [bm]: https://github.com/cloudflare/bm
@@ -39,6 +39,8 @@ If you're interested in long-range compression, some other projects might intere
 [gitdiff]: https://github.com/git/git/blob/master/diff-delta.c
 [xdelta]: http://xdelta.org/
 [open-vcdiff]: https://code.google.com/p/open-vcdiff/
+[brotli]: https://code.google.com/p/font-compression-reference/
+[woff20]: http://www.w3.org/TR/WOFF20ER/
 
 If you have any trouble or questions, get in touch!
 
