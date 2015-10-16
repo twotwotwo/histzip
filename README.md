@@ -1,6 +1,10 @@
 histzip
 =======
 
+**Hey! Thanks for your interest, but consider using [brotli](https://github.com/google/brotli) instead.** Brotli also supports long history windows and can compress quickly, and unlike histzip is now standardized and widely deployed. No native Go implementation exists that I know of, but `cgo` bindings are always an option.
+
+-------------
+
 Compress wiki change histories, etc. Made for any input with long duplicated sections (100+ bytes) up to a few MB apart.
 
 **Download binaries** for [Linux amd64][1], [Linux x86][3], [Windows 64-bit][4]
@@ -29,7 +33,7 @@ While compressing, histzip decompresses its output and compares checksums as a s
 [framing]: format.md
 [lrcompress-format]: lrcompress/format.md
 
-If you're interested in long-range compression, some other projects might interest you. [rzip] is awesome; histzip lifts some implementation tricks directly from it. [bm] is a [Bentley-McIlroy][bmpaper] library by CloudFlare also written in Go, compressing matches against a fixed dictionary (in essence, performing a binary diff). [Git][gitdiff], [xdelta], and [open-vcdiff] also each have open-source binary diff implementations. Google's [Brotli][brotli] compressor is a tuned flate variant using a 4MB window, used to compress [WOFF 2.0][woff20] Web fonts.
+If you're interested in long-range compression, some other projects might interest you. [rzip] is awesome; histzip lifts some implementation tricks directly from it. [bm] is a [Bentley-McIlroy][bmpaper] library by CloudFlare also written in Go, compressing matches against a fixed dictionary (in essence, performing a binary diff). [Git][gitdiff], [xdelta], and [open-vcdiff] also each have open-source binary diff implementations. Google's [Brotli][brotli] compressor is a tuned flate variant defaulting to a 4MB window, first used to compress [WOFF 2.0][woff20] Web fonts.
 
 [rzip]: http://rzip.samba.org/
 [bm]: https://github.com/cloudflare/bm
