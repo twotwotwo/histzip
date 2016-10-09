@@ -1,7 +1,7 @@
 histzip
 =======
 
-**Hey! Thanks for your interest, but consider using [brotli](https://github.com/google/brotli) instead.** Brotli also supports long history windows and can compress quickly, and unlike histzip is now standardized and widely deployed. No native Go implementation exists that I know of, but `cgo` bindings are always an option.
+**Hey! Thanks for your interest, but consider using something like [brotli](https://github.com/google/brotli) or [zstd](https://github.com/facebook/zstd) instead.** Those modern compressors also compress quickly with long history windows (the problem histzip was written to solve) but are much better supported; you should be able to achieve better speed and compression ratios with them as well.
 
 -------------
 
