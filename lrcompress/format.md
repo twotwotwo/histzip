@@ -26,13 +26,11 @@ lrcompress is the long-range compression format used in histzip, also usable as 
   number of bytes to copy.  That's followed by another integer (`Advance`)
   that might be positive or negative. `Advance` is subtracted from `CopyOffset`,
   then `Length` bytes are output starting from `CopyOffset` bytes ago 
-  in the history. In pseudocode:
+  in the history. That is, the steps the decompressor should take are:
   
-  ```
-read signed ints Length and Advance
-CopyOffset -= Advance
-output Length bytes from CopyOffset bytes ago in the history
-  ```
+  * read signed ints `Length` and `Advance`
+  * `CopyOffset` -= `Advance`
+  * output `Length` bytes starting `CopyOffset` bytes ago in the history
 
 * A copy instruction's source may overlap its destination. In that case,
   decompressors must produce repeats.  For example, a copy with length 5 
